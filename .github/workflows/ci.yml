@@ -1,0 +1,101 @@
+name: Python Testing CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_CACHE_DIR: .uv-cache
+  UV_COMPILE_BYTECODE: "1"
+  UV_LINK_MODE: copy
+
+jobs:
+  # Stage 1: Lint
+  ruff:
+    name: Ruff Lint
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-uv
+
+      - name: Ruff check
+        run: uv run ruff check
+
+  ruff-format:
+    name: Ruff Format
+    runs-on: [self-hosted, Linux, X64]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-uv
+
+      - name: Ruff format check
+        run: uv run ruff format --check
+
+  # Stage 2: Typechecking
+  ty:
+    name: Type Checking
+    runs-on: [self-hosted, Linux, X64]
+    needs: [ruff, ruff-format]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-uv
+
+      - name: Run ty
+        run: uv run ty check
+
+      - name: Generate type checking report
+        if: always()
+        run: |
+          uv run ty check --output-format=gitlab \
+            > gl-code-quality-report-ty.json || true
+
+      - name: Upload code quality report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ty-code-quality-report
+          path: gl-code-quality-report-ty.json
+          if-no-files-found: ignore
+
+  # Stage 3: Test
+  pytest:
+    name: Pytest
+    runs-on: [self-hosted, Linux, X64]
+    needs: ty
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-uv
+
+      - name: Run tests
+        run: uv run pytest
+
+      - name: Run tests with coverage
+        run: |
+          uv run pytest \
+            --cov \
+            --cov-report=term \
+            --cov-report=xml:coverage.xml \
+            --junitxml=junit.xml
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-reports
+          path: |
+            junit.xml
+            coverage.xml
+          if-no-files-found: ignore
